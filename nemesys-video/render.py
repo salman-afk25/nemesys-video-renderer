@@ -104,23 +104,45 @@ def main():
         if sc.get("prompt_close") and (sc.get("efek") == "dramatis" or i in (0, n - 1)): get_img(f"{sc['prompt_close']}, {style}", f"{OUT}/b{i}.jpg")
     log(f"Gambar selesai untuk {n} adegan")
 
-    # 2) suara
-    def make_tts(rate):
-        ds = []
-        for i, sc in enumerate(scenes):
-            v = voices.get(sc.get("suara", ""), {"voice": "id-ID-GadisNeural", "pitch": "+0Hz", "rate": 0})
-            rr = int(v.get("rate", 0)) + rate
-            asyncio.run(edge_tts.Communicate(speakable(sc["narasi"]), v.get("voice", "id-ID-GadisNeural"),
-                                             rate=f"{rr:+d}%", pitch=v.get("pitch", "+0Hz")).save(f"{OUT}/v{i}.mp3"))
-            ds.append(dur(f"{OUT}/v{i}.mp3"))
-        return ds
-    rate = 0; ds = make_tts(rate)
-    for _ in range(2):
-        total = sum(ds) + 0.5 * n
-        if 50 <= total <= 58: break
-        rate = max(-12, min(18, int(round((total / 55.0 - 1) * 100 + rate))))
-        ds = make_tts(rate)
-    if sum(ds) > TARGET - 2: raise RuntimeError(f"Dialog terlalu panjang ({sum(ds):.1f} dtk) walau sudah dipercepat {rate}%")
+    # 2) suara: Gemini TTS (gratis) → cadangan edge-tts
+    state = {"gemini": True}
+    def gemini_tts(text, v, style, path):
+        if not state["gemini"] or not v.get("gemini"): return False
+        st = ", ".join(x for x in [v.get("gaya", ""), style] if x)
+        for attempt in range(3):
+            try:
+                r = requests.post(f"{W}/render/tts", headers=H, json={"text": text, "voice": v["gemini"], "style": st}, timeout=90)
+                if r.ok and len(r.content) > 2000:
+                    open(path + ".wav", "wb").write(r.content)
+                    run(["ffmpeg", "-y", "-i", path + ".wav", "-af", "silenceremove=start_periods=1:start_threshold=-45dB,areverse,silenceremove=start_periods=1:start_threshold=-45dB,areverse", "-ar", "44100", path])
+                    return True
+                if r.status_code in (429, 503): import time; time.sleep(6 * (attempt + 1)); continue
+                break
+            except Exception: pass
+        state["gemini"] = False
+        log("ℹ️ Suara Gemini tidak tersedia, beralih ke suara cadangan")
+        return False
+    used = {"gemini": 0, "edge": 0}
+    raw = []
+    for i, sc in enumerate(scenes):
+        v = voices.get(sc.get("suara", ""), {"voice": "id-ID-GadisNeural", "pitch": "+0Hz", "rate": 0})
+        path = f"{OUT}/r{i}.mp3"; txt = speakable(sc["narasi"])
+        if gemini_tts(txt, v, sc.get("gaya_suara", ""), path): used["gemini"] += 1
+        else:
+            asyncio.run(edge_tts.Communicate(txt, v.get("voice", "id-ID-GadisNeural"), rate=f"{int(v.get('rate', 0)):+d}%", pitch=v.get("pitch", "+0Hz")).save(path)); used["edge"] += 1
+        raw.append(dur(path))
+    total = sum(raw) + 0.5 * n
+    tempo = 1.0
+    if total > 57.5: tempo = min(1.2, total / 56.5)
+    elif total < 45: tempo = max(0.9, total / 48.0)
+    ds = []
+    for i in range(n):
+        run(["ffmpeg", "-y", "-i", f"{OUT}/r{i}.mp3", "-af", f"atempo={tempo:.3f}", "-ar", "44100", f"{OUT}/v{i}.mp3"])
+        ds.append(dur(f"{OUT}/v{i}.mp3"))
+    rate = int(round((tempo - 1) * 100))
+    if sum(ds) > TARGET - 2:
+        raise RuntimeError(f"Dialog terlalu panjang ({sum(ds):.1f} dtk) walau sudah dipercepat")
+    log(f"Suara: {used['gemini']} baris Gemini, {used['edge']} baris cadangan")
     gap = (TARGET - sum(ds)) / n
     durs = [d + gap for d in ds]; durs[-1] = TARGET - sum(durs[:-1])
     log(f"Suara {sum(ds):.1f} dtk (penyesuaian kecepatan {rate:+d}%), total {TARGET:.0f} dtk")
