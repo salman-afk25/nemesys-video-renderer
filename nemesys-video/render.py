@@ -42,13 +42,33 @@ def readable(t):
     return re.sub(r"\s+", " ", re.sub(r"[\"“”*_#~`]", "", t)).strip()
 
 class QuotaError(Exception): pass
+IMG = {"local": False, "pipe": None}
+def local_img(prompt, path):
+    """Cadangan gratis tanpa kuota: SD-Turbo di CPU runner GitHub."""
+    if IMG["pipe"] is None:
+        import torch
+        from diffusers import AutoPipelineForText2Image
+        torch.set_num_threads(os.cpu_count() or 4)
+        IMG["pipe"] = AutoPipelineForText2Image.from_pretrained("stabilityai/sd-turbo", torch_dtype=torch.float32)
+        IMG["pipe"].set_progress_bar_config(disable=True)
+    short = prompt[:300]
+    im = IMG["pipe"](prompt=f"anime key visual, cel shading, {short}", num_inference_steps=2, guidance_scale=0.0, width=512, height=896).images[0]
+    im = im.resize((768, 1344))
+    im.save(path, quality=92)
+
 def get_img(prompt, path):
-    for attempt in range(3):
-        r = requests.post(f"{W}/render/img", headers=H, json={"prompt": prompt}, timeout=120)
-        if r.ok and len(r.content) > 5000:
-            open(path, "wb").write(r.content); return
-        if "4006" in r.text: raise QuotaError()
-    raise RuntimeError(f"Gagal membuat gambar: {r.status_code} {r.text[:200]}")
+    if not IMG["local"]:
+        for attempt in range(3):
+            r = requests.post(f"{W}/render/img", headers=H, json={"prompt": prompt}, timeout=120)
+            if r.ok and len(r.content) > 5000:
+                open(path, "wb").write(r.content); return
+            if "4006" in r.text:
+                IMG["local"] = True
+                log("ℹ️ Kuota gambar Cloudflare habis, beralih ke pembuat gambar lokal (SD-Turbo)")
+                break
+        else:
+            raise RuntimeError(f"Gagal membuat gambar: {r.status_code} {r.text[:200]}")
+    local_img(prompt, path)
 
 MOVES = ["zoomin", "panright", "zoomout", "panup", "panleft", "zoomin_slow"]
 def shot(img, d, move, dramatic, out):
