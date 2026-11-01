@@ -41,11 +41,13 @@ def speakable(t):
 def readable(t):
     return re.sub(r"\s+", " ", re.sub(r"[\"“”*_#~`]", "", t)).strip()
 
+class QuotaError(Exception): pass
 def get_img(prompt, path):
     for attempt in range(3):
         r = requests.post(f"{W}/render/img", headers=H, json={"prompt": prompt}, timeout=120)
         if r.ok and len(r.content) > 5000:
             open(path, "wb").write(r.content); return
+        if "4006" in r.text: raise QuotaError()
     raise RuntimeError(f"Gagal membuat gambar: {r.status_code} {r.text[:200]}")
 
 MOVES = ["zoomin", "panright", "zoomout", "panup", "panleft", "zoomin_slow"]
@@ -99,7 +101,7 @@ def main():
     # 1) gambar: shot lebar + close-up
     for i, sc in enumerate(scenes):
         get_img(f"{sc['prompt_gambar']}, {style}", f"{OUT}/a{i}.jpg")
-        if sc.get("prompt_close"): get_img(f"{sc['prompt_close']}, {style}", f"{OUT}/b{i}.jpg")
+        if sc.get("prompt_close") and (sc.get("efek") == "dramatis" or i in (0, n - 1)): get_img(f"{sc['prompt_close']}, {style}", f"{OUT}/b{i}.jpg")
     log(f"Gambar selesai untuk {n} adegan")
 
     # 2) suara
@@ -161,7 +163,7 @@ def main():
         trans = "fadeblack" if scenes and j % 5 == 0 else "fade"
         fc.append(f"{prev}[{j}:v]xfade=transition={trans}:duration={XF}:offset={off:.3f}[x{j}]"); prev = f"[x{j}]"
     run(["ffmpeg", "-y", *inp, "-filter_complex", ";".join(fc) if fc else "[0:v]null[x0]", "-map", prev if fc else "[x0]",
-         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", f"{OUT}/joined.mp4"])
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", f"{OUT}/joined.mp4"])
 
     # 5) subtitle, judul, watermark
     ass = ["[Script Info]", "ScriptType: v4.00+", f"PlayResX: {WIDTH}", f"PlayResY: {HEIGHT}", "",
@@ -173,7 +175,7 @@ def main():
            "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
     title = story.get("judul", ""); seri, _, ep = title.partition(" — ")
     ass.append(f"Dialogue: 1,{ts(0.2)},{ts(3.6)},Seri,,0,0,0,,{{\\fad(400,400)\\pos(360,560)}}{seri}")
-    ass.append(f"Dialogue: 1,{ts(0.4)},{ts(3.6)},Judul,,0,0,0,,{{\\fad(400,400)\\pos(360,640)}}{(ep or title).replace(',', '，')}")
+    ass.append(f"Dialogue: 1,{ts(0.4)},{ts(3.6)},Judul,,0,0,0,,{{\\fad(400,400)\\pos(360,640)}}{(ep or title)}")
     ass.append(f"Dialogue: 0,{ts(0)},{ts(TARGET)},Studio,,0,0,0,,{story.get('studio','')}")
     for a, b, c in subs: ass.append(f"Dialogue: 0,{ts(a)},{ts(b)},Sub,,0,0,0,,{{\\fad(120,120)}}{c}")
     open(f"{OUT}/sub.ass", "w").write("\n".join(ass))
@@ -182,7 +184,7 @@ def main():
     run(["ffmpeg", "-y", "-i", f"{OUT}/joined.mp4", "-i", f"{OUT}/audio.m4a",
          "-vf", f"subtitles={OUT}/sub.ass,tpad=stop_mode=clone:stop_duration=1", "-map", "0:v", "-map", "1:a",
          "-t", str(TARGET), "-c:v", "libx264", "-preset", "medium", "-b:v", f"{vbit}k", "-maxrate", f"{vbit}k",
-         "-bufsize", f"{vbit*2}k", "-c:a", "copy", "-movflags", "+faststart", final])
+         "-bufsize", f"{vbit*2}k", "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0", "-c:a", "copy", "-movflags", "+faststart", final])
     log(f"Render selesai: {dur(final):.2f} detik, {os.path.getsize(final)/1e6:.1f} MB")
     with open(final, "rb") as f:
         r = requests.post(f"{W}/render/upload", headers={**H, "x-job": JOB, "content-type": "video/mp4"}, data=f, timeout=300)
@@ -190,5 +192,10 @@ def main():
 
 if __name__ == "__main__":
     try: main()
+    except QuotaError:
+        log("⏸️ Kuota gambar AI harian habis. Render otomatis dilanjutkan setelah kuota reset pukul 07.10 WIB.")
+        try: requests.post(f"{W}/render/wait", headers=H, json={"job": JOB}, timeout=20)
+        except Exception: pass
+        sys.exit(0)
     except Exception as e:
         log(f"❌ Render gagal: {e}"); sys.exit(1)
