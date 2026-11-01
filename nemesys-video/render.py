@@ -3,7 +3,7 @@ import asyncio, json, os, subprocess, sys, textwrap
 import requests, edge_tts
 
 W = os.environ["WORKER_URL"].rstrip("/")
-H = {"x-nemesys-key": os.environ["RENDER_SECRET"]}
+H = {"x-nemesys-key": os.environ["RENDER_SECRET"], "user-agent": "nemesys-renderer"}
 JOB = os.environ["JOB_ID"]
 OUT = "out"; os.makedirs(OUT, exist_ok=True)
 WIDTH, HEIGHT, FPS = 720, 1280, 25
@@ -29,7 +29,9 @@ async def tts(text, path, voice):
     await edge_tts.Communicate(text, voice, rate="+5%").save(path)
 
 def main():
-    job = requests.get(f"{W}/render/job/{JOB}", headers=H, timeout=30).json()
+    r = requests.get(f"{W}/render/job/{JOB}", headers={**H, "user-agent": "nemesys-renderer"}, timeout=30)
+    try: job = r.json()
+    except Exception: raise RuntimeError(f"Ambil job gagal {r.status_code}: {r.text[:300]}")
     story = job["story"]; scenes = story["scenes"][:10]
     voice = story.get("voice", "id-ID-GadisNeural")
     style = story.get("gaya_visual", "")
