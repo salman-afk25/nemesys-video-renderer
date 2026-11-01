@@ -47,10 +47,12 @@ def main():
         else: raise RuntimeError(f"Gagal membuat gambar adegan {i+1}: {r.status_code} {r.text[:200]}")
     log(f"{n} gambar selesai")
     # 2) narasi, kecepatan disesuaikan agar total narasi ~57 detik
+    voices = story.get("voices", {})
     def make_tts(rate):
         ds = []
         for i, sc in enumerate(scenes):
-            asyncio.run(edge_tts.Communicate(sc["narasi"], voice, rate=f"{rate:+d}%").save(f"{OUT}/s{i}.mp3"))
+            v = voices.get(sc.get("suara", ""), {"voice": voice, "pitch": "+0Hz"})
+            asyncio.run(edge_tts.Communicate(sc["narasi"], v.get("voice", voice), rate=f"{rate:+d}%", pitch=v.get("pitch", "+0Hz")).save(f"{OUT}/s{i}.mp3"))
             ds.append(dur(f"{OUT}/s{i}.mp3"))
         return ds
     rate = 0
@@ -81,8 +83,9 @@ def main():
              "-c:a", "aac", "-b:a", "96k", "-ar", "44100", "-ac", "2", clip])
         words = sc["narasi"].split(); chunks = [" ".join(words[k:k+8]) for k in range(0, len(words), 8)] or [""]
         per = ds[i] / len(chunks)
+        lab = sc.get("label", "")
         for k, c in enumerate(chunks):
-            subs.append((t + lead + k*per, t + lead + (k+1)*per, c))
+            subs.append((t + lead + k*per, t + lead + (k+1)*per, (f"{{\\c&H0000D7FF&}}{lab}: {{\\c&H00FFFFFF&}}" if lab and k == 0 else "") + c))
         clips.append(clip); t += d
     with open(f"{OUT}/list.txt", "w") as f:
         for c in clips: f.write(f"file '{os.path.basename(c)}'\n")
@@ -90,9 +93,11 @@ def main():
     ass = ["[Script Info]", "ScriptType: v4.00+", f"PlayResX: {WIDTH}", f"PlayResY: {HEIGHT}", "",
            "[V4+ Styles]", "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV",
            "Style: Sub,DejaVu Sans,36,&H00FFFFFF,&H00000000,&H80000000,1,1,3,1,2,50,50,170",
-           "Style: Judul,DejaVu Sans,52,&H0000D7FF,&H00000000,&H80000000,1,1,4,2,8,40,40,140", "",
+           "Style: Studio,DejaVu Sans,22,&H99FFFFFF,&H00000000,&H00000000,1,1,1,0,9,20,24,24",
+           "Style: Judul,DejaVu Sans,48,&H0000D7FF,&H00000000,&H80000000,1,1,4,2,8,40,40,140", "",
            "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-           f"Dialogue: 0,{ts(0)},{ts(3.5)},Judul,,0,0,0,,{{\\fad(300,300)}}{story.get('judul','').replace(',', '，')}"]
+           f"Dialogue: 0,{ts(0)},{ts(3.5)},Judul,,0,0,0,,{{\\fad(300,300)}}{story.get('judul','').replace(',', '，')}",
+           f"Dialogue: 0,{ts(0)},{ts(60)},Studio,,0,0,0,,{story.get('studio','')}"]
     for a, b, c in subs: ass.append(f"Dialogue: 0,{ts(a)},{ts(b)},Sub,,0,0,0,,{c}")
     open(f"{OUT}/sub.ass", "w").write("\n".join(ass))
     final = f"{OUT}/video.mp4"
