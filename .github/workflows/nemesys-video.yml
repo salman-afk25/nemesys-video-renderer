@@ -1,0 +1,26 @@
+name: NEMESYS Video Cerpen
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Job ID"
+        required: true
+concurrency:
+  group: nemesys-video
+  cancel-in-progress: false
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core > /dev/null
+          pip install -q edge-tts==7.* requests
+      - name: Render
+        env:
+          WORKER_URL: https://nemesys-discord.rensheenidv.workers.dev
+          RENDER_SECRET: ${{ secrets.RENDER_SECRET }}
+          JOB_ID: ${{ github.event.inputs.job }}
+        run: python nemesys-video/render.py
