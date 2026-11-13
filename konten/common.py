@@ -53,10 +53,16 @@ def stock(q, out, need):
     return False
 
 def ai_img(prompt, img):
-    for _ in range(3):
-        r = requests.post(u("img"), json={"prompt": prompt + ", vertical composition, high detail"}, timeout=120)
-        if r.ok and len(r.content) > 5000: open(img, "wb").write(r.content); return
-    raise RuntimeError(f"gambar gagal: {r.status_code}")
+    import time
+    err = ""
+    for a in range(5):
+        try:
+            r = requests.post(u("img"), json={"prompt": prompt + ", vertical composition, high detail"}, timeout=120)
+            if r.ok and len(r.content) > 5000: open(img, "wb").write(r.content); return
+            err = f"{r.status_code}"
+        except Exception as e: err = str(e)[:120]
+        time.sleep(2 + a * 2)
+    raise RuntimeError(f"gambar gagal: {err}")
 
 def video():
     """Animasi Remotion: gambar AI bergerak halus + suara + teks per kata."""
