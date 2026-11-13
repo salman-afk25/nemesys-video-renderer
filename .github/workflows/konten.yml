@@ -23,11 +23,13 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core > /dev/null
           pip install -q edge-tts==7.* requests yt-dlp
       - uses: actions/setup-node@v4
-        if: github.event.inputs.kind == 'render'
+        if: github.event.inputs.kind == 'render' || github.event.inputs.kind == 'video'
         with: {node-version: 20}
       - name: Video (MoneyPrinterTurbo style)
         if: github.event.inputs.kind == 'video'
-        run: python konten/common.py video
+        run: |
+          cd konten/remotion && npm install --silent --no-audit --no-fund
+          cd ../.. && python konten/common.py video
       - name: Clip (AutoClip style)
         if: github.event.inputs.kind == 'clip'
         run: python konten/common.py clip
