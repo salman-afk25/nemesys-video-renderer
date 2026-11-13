@@ -1,0 +1,38 @@
+name: Konten Bot
+on:
+  workflow_dispatch:
+    inputs:
+      job: {description: "Job ID", required: true}
+      kind: {description: "video|clip|render", required: true}
+      key: {description: "job key", required: true}
+run-name: konten ${{ github.event.inputs.kind }} ${{ github.event.inputs.job }}
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      API: https://konten-bot.rensheenidv.workers.dev
+      JOB_ID: ${{ github.event.inputs.job }}
+      JOB_KEY: ${{ github.event.inputs.key }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mask key
+        run: echo "::add-mask::${{ github.event.inputs.key }}"
+      - name: Tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core > /dev/null
+          pip install -q edge-tts==7.* requests yt-dlp
+      - uses: actions/setup-node@v4
+        if: github.event.inputs.kind == 'render'
+        with: {node-version: 20}
+      - name: Video (MoneyPrinterTurbo style)
+        if: github.event.inputs.kind == 'video'
+        run: python konten/common.py video
+      - name: Clip (AutoClip style)
+        if: github.event.inputs.kind == 'clip'
+        run: python konten/common.py clip
+      - name: Render (Remotion)
+        if: github.event.inputs.kind == 'render'
+        run: |
+          cd konten/remotion && npm install --silent --no-audit --no-fund
+          cd ../.. && python konten/common.py render
