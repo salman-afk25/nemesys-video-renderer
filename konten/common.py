@@ -31,22 +31,55 @@ STYLE = "FontName=DejaVu Sans,Fontsize=13,Bold=1,PrimaryColour=&H00FFFFFF,Outlin
 async def tts(text, out):
     await edge_tts.Communicate(text, "id-ID-ArdiNeural", rate="+8%").save(out)
 
+def pexels(q):
+    try:
+        r = requests.get(u("pexels", q=q), timeout=30)
+        return r.json().get("videos") or [] if r.ok else []
+    except Exception: return []
+
+used = set()
+def stock(q, out, need):
+    for query in [q, " ".join(q.split()[:2]), q.split()[0] if q.split() else ""]:
+        if not query: continue
+        for v in pexels(query):
+            if v["id"] in used or v.get("dur", 0) < 3: continue
+            try:
+                with requests.get(v["link"], stream=True, timeout=120) as r:
+                    r.raise_for_status()
+                    with open(out, "wb") as f:
+                        for ch in r.iter_content(1 << 20): f.write(ch)
+                used.add(v["id"]); return True
+            except Exception: continue
+    return False
+
+def ai_img(prompt, img):
+    for _ in range(3):
+        r = requests.post(u("img"), json={"prompt": prompt + ", vertical composition, high detail"}, timeout=120)
+        if r.ok and len(r.content) > 5000: open(img, "wb").write(r.content); return
+    raise RuntimeError(f"gambar gagal: {r.status_code}")
+
 def video():
     job = requests.get(u("job"), timeout=30).json()
     scenes = job["adegan"][:8]; os.makedirs("o", exist_ok=True)
-    clips, subs, t = [], [], 0.0
+    clips, subs, t, nstock = [], [], 0.0, 0
     for i, s in enumerate(scenes):
-        img = f"o/{i}.jpg"; aud = f"o/{i}.mp3"; vid = f"o/{i}.mp4"
-        for _ in range(3):
-            r = requests.post(u("img"), json={"prompt": s["gambar"] + ", vertical composition, high detail"}, timeout=120)
-            if r.ok and len(r.content) > 5000: open(img, "wb").write(r.content); break
-        else: raise RuntimeError(f"gambar gagal: {r.status_code}")
+        img = f"o/{i}.jpg"; aud = f"o/{i}.mp3"; vid = f"o/{i}.mp4"; src = f"o/s{i}.mp4"
         asyncio.run(tts(s["narasi"], aud))
-        d = dur(aud) + 0.35; fr = int(d * FPS) + 2
-        z = "1+0.15*on/%d" % fr if i % 2 == 0 else "1.15-0.15*on/%d" % fr
-        run(["ffmpeg", "-y", "-loop", "1", "-i", img, "-i", aud, "-filter_complex",
-             f"[0]scale=900:1600:force_original_aspect_ratio=increase,crop=900:1600,zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={fr}:s={W}x{H}:fps={FPS},format=yuv420p[v];[1]apad=pad_dur=0.35[a]",
-             "-map", "[v]", "-map", "[a]", "-t", f"{d:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-c:a", "aac", "-ar", "44100", "-ac", "2", vid])
+        d = dur(aud) + 0.35
+        enc = ["-t", f"{d:.2f}", "-r", str(FPS), "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-c:a", "aac", "-ar", "44100", "-ac", "2", vid]
+        if stock(s.get("cari") or s["gambar"], src, d):
+            nstock += 1
+            run(["ffmpeg", "-y", "-stream_loop", "-1", "-i", src, "-i", aud, "-filter_complex",
+                 f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{H},fps={FPS},format=yuv420p[v];[1]apad=pad_dur=0.35[a]",
+                 "-map", "[v]", "-map", "[a]"] + enc)
+        else:
+            ai_img(s["gambar"], img)
+            fr = int(d * FPS) + 2
+            # zoom halus: perbesar gambar 3x dulu supaya tidak goyang
+            z = "1+0.10*on/%d" % fr if i % 2 == 0 else "1.10-0.10*on/%d" % fr
+            run(["ffmpeg", "-y", "-loop", "1", "-i", img, "-i", aud, "-filter_complex",
+                 f"[0]scale=2160:3840:force_original_aspect_ratio=increase:flags=lanczos,crop=2160:3840,zoompan=z='{z}':x='trunc(iw/2-(iw/zoom/2))':y='trunc(ih/2-(ih/zoom/2))':d={fr}:s={W}x{H}:fps={FPS},format=yuv420p[v];[1]apad=pad_dur=0.35[a]",
+                 "-map", "[v]", "-map", "[a]"] + enc)
         words = s["narasi"].split()
         chunks = [" ".join(words[k:k+5]) for k in range(0, len(words), 5)] or [""]
         per = (d - 0.35) / len(chunks)
@@ -59,7 +92,8 @@ def video():
     ass += "".join(f"Dialogue: 0,{ts(a)},{ts(b)},D,{c}\n" for a, b, c in subs)
     open("o/s.ass", "w").write(ass)
     run(["ffmpeg", "-y", "-i", "o/cat.mp4", "-vf", "ass=o/s.ass", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-c:a", "copy", "-movflags", "+faststart", "o/final.mp4"])
-    send("o/final.mp4", f"🎬 {job.get('judul','Video')}")
+    cred = "\n📹 Video stok: Pexels" if nstock else ""
+    send("o/final.mp4", f"🎬 {job.get('judul','Video')}{cred}")
 
 # ---------- clip ----------
 def vtt_text(path):
