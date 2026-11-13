@@ -59,41 +59,26 @@ def ai_img(prompt, img):
     raise RuntimeError(f"gambar gagal: {r.status_code}")
 
 def video():
+    """Animasi Remotion: gambar AI bergerak halus + suara + teks per kata."""
     job = requests.get(u("job"), timeout=30).json()
-    scenes = job["adegan"][:8]; os.makedirs("o", exist_ok=True)
-    clips, subs, t, nstock = [], [], 0.0, 0
+    scenes = job["adegan"][:8]
+    pub = "konten/remotion/public/v"; os.makedirs(pub, exist_ok=True); os.makedirs("o", exist_ok=True)
+    fps, out = 30, []
     for i, s in enumerate(scenes):
-        img = f"o/{i}.jpg"; aud = f"o/{i}.mp3"; vid = f"o/{i}.mp4"; src = f"o/s{i}.mp4"
+        img = f"{pub}/{i}.jpg"; aud = f"{pub}/{i}.mp3"
+        ai_img(s["gambar"], img)
         asyncio.run(tts(s["narasi"], aud))
-        d = dur(aud) + 0.35
-        enc = ["-t", f"{d:.2f}", "-r", str(FPS), "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-c:a", "aac", "-ar", "44100", "-ac", "2", vid]
-        if stock(s.get("cari") or s["gambar"], src, d):
-            nstock += 1
-            run(["ffmpeg", "-y", "-stream_loop", "-1", "-i", src, "-i", aud, "-filter_complex",
-                 f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{H},fps={FPS},format=yuv420p[v];[1]apad=pad_dur=0.35[a]",
-                 "-map", "[v]", "-map", "[a]"] + enc)
-        else:
-            ai_img(s["gambar"], img)
-            fr = int(d * FPS) + 2
-            # zoom halus: perbesar gambar 3x dulu supaya tidak goyang
-            z = "1+0.10*on/%d" % fr if i % 2 == 0 else "1.10-0.10*on/%d" % fr
-            run(["ffmpeg", "-y", "-loop", "1", "-i", img, "-i", aud, "-filter_complex",
-                 f"[0]scale=2160:3840:force_original_aspect_ratio=increase:flags=lanczos,crop=2160:3840,zoompan=z='{z}':x='trunc(iw/2-(iw/zoom/2))':y='trunc(ih/2-(ih/zoom/2))':d={fr}:s={W}x{H}:fps={FPS},format=yuv420p[v];[1]apad=pad_dur=0.35[a]",
-                 "-map", "[v]", "-map", "[a]"] + enc)
+        d = dur(aud) + 0.3; frames = int(d * fps) + 1
         words = s["narasi"].split()
-        chunks = [" ".join(words[k:k+5]) for k in range(0, len(words), 5)] or [""]
-        per = (d - 0.35) / len(chunks)
-        for j, c in enumerate(chunks): subs.append((t + j*per, t + (j+1)*per, c))
-        clips.append(vid); t += d
-    open("o/list.txt", "w").write("".join(f"file '{os.path.basename(c)}'\n" for c in clips))
-    run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "o/list.txt", "-c", "copy", "o/cat.mp4"])
-    ass = "[Script Info]\nScriptType: v4.00+\nPlayResX: 360\nPlayResY: 640\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BorderStyle, Outline, Shadow, Alignment, MarginV, Bold\n" \
-          "Style: D,DejaVu Sans,17,&H00FFFFFF,&H00000000,1,2,0,2,60,1\n\n[Events]\nFormat: Layer, Start, End, Style, Text\n"
-    ass += "".join(f"Dialogue: 0,{ts(a)},{ts(b)},D,{c}\n" for a, b, c in subs)
-    open("o/s.ass", "w").write(ass)
-    run(["ffmpeg", "-y", "-i", "o/cat.mp4", "-vf", "ass=o/s.ass", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-c:a", "copy", "-movflags", "+faststart", "o/final.mp4"])
-    cred = "\n📹 Video stok: Pexels" if nstock else ""
-    send("o/final.mp4", f"🎬 {job.get('judul','Video')}{cred}")
+        chunks = [" ".join(words[k:k+4]) for k in range(0, len(words), 4)] or [""]
+        per = (d - 0.3) * fps / len(chunks)
+        caps = [{"from": int(j*per), "to": int((j+1)*per), "text": c} for j, c in enumerate(chunks)]
+        out.append({"img": f"v/{i}.jpg", "audio": f"v/{i}.mp3", "frames": frames, "caps": caps})
+    props = {"judul": job.get("judul") or "", "scenes": out}
+    open("o/props.json", "w").write(json.dumps(props))
+    run(["npx", "remotion", "render", "src/index.ts", "Video", "../../o/final.mp4", "--props=../../o/props.json",
+         "--codec=h264", "--crf=23", "--concurrency=2", "--log=error"], cwd="konten/remotion")
+    send("o/final.mp4", f"🎬 {job.get('judul','Video')}")
 
 # ---------- clip ----------
 def vtt_text(path):
