@@ -27,19 +27,20 @@ My role: designed and built end to end.
 
 ## Tech stack
 
-- Python 3 with requests, asyncio and subprocess
-- Gemini TTS through the worker endpoint, and edge-tts with Microsoft Edge neural voices, id-ID-GadisNeural and id-ID-ArdiNeural
-- AI image generation through a Cloudflare Worker endpoint, with stabilityai/sd-turbo via diffusers and PyTorch on CPU as fallback
-- LLM text endpoint of the same worker, used to pick the best clip from a timestamped transcript
-- Remotion 4 with React 18 in TypeScript for animated compositions
-- ffmpeg and ffprobe: zoompan, xfade, eq and colorbalance, aevalsrc, loudnorm, sidechaincompress, ASS subtitles, libx264
-- yt-dlp and Pexels search for source footage
-- GitHub Actions with workflow_dispatch, ubuntu-latest runners and actions/cache for the model weights
-- num2words for reading numbers in Indonesian
-
+- **LLM (text)** - `POST /a/llm` on the Konten Bot Cloudflare Worker, which proxies the model (no provider name appears in this repo). Used by the clip step to pick the best 30-60 second segment from a timestamped transcript as JSON.
+- **Gemini TTS (Google)** - `POST /render/tts`, one call per narration line, with the voice id and style taken from the job payload.
+- **edge-tts (Microsoft Edge neural voices)** - narration fallback used once Gemini fails: `id-ID-GadisNeural` by default and `id-ID-ArdiNeural` for Konten videos.
+- **Cloudflare Workers AI (image generation)** - `POST /render/img` for scene key visuals; Cloudflare quota error `4006` switches to the local generator.
+- **Stability AI SD-Turbo (`stabilityai/sd-turbo`)** - `diffusers` `AutoPipelineForText2Image` on PyTorch CPU, 2 inference steps, guidance scale 0.0, weights cached with `actions/cache`.
+- Fallback order: Gemini TTS, then edge-tts; Cloudflare Workers AI images, then SD-Turbo on the runner.
+- **Pexels video search** and **yt-dlp** (both through the Konten Bot worker API / runner) for source footage in the clip and stock-video paths.
+- **Remotion 4.0.300 with React 18.3.1** in TypeScript for the animated compositions, rendered with `npx remotion render` on Node 20.
+- **ffmpeg / ffprobe** - zoompan camera moves and shake, xfade joins, eq, colorbalance, vignette and noise grading, `aevalsrc` chord-pad music, sidechaincompress ducking, loudnorm, ASS subtitles, libx264.
+- **Python 3**: requests, asyncio, subprocess, edge-tts, num2words, torch, diffusers, transformers, accelerate, safetensors.
+- **GitHub Actions** (`workflow_dispatch`, ubuntu-latest, `actions/cache`) as the render farm, driven by the Discord bot behind the Cloudflare Worker.
 ## How it works
 
-1. A workflow is dispatched with a job ID, and the renderer fetches the story JSON from the worker.
+1. A command in Discord reaches the Cloudflare Worker, which stores the story and dispatches the workflow with a job ID; the renderer fetches that job JSON back from the worker.
 2. Each scene gets a wide shot image and, when the scene is dramatic, a close-up as well.
 3. Narration is synthesized line by line, trimmed and time stretched so the episode lands near 60 seconds.
 4. ffmpeg animates each still, joins shots with crossfades, mixes voice over music, then burns in subtitles.
